@@ -18,7 +18,7 @@ interface DataTableProps<T> {
   searchable?: boolean;
 }
 
-export function DataTable<T extends Record<string, any>>({ columns, data, pageSize = 10, searchable = false }: DataTableProps<T>) {
+export function DataTable<T extends Record<string, unknown>>({ columns, data, pageSize = 10 }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
@@ -31,13 +31,15 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
   };
 
   const sortedData = React.useMemo(() => {
-    let sortableItems = [...data];
+    const sortableItems = [...data];
     if (sortConfig !== null) {
       sortableItems.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
+        const aVal = String(a[sortConfig.key] ?? "");
+        const bVal = String(b[sortConfig.key] ?? "");
+        if (aVal < bVal) {
           return sortConfig.direction === "asc" ? -1 : 1;
         }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
+        if (aVal > bVal) {
           return sortConfig.direction === "asc" ? 1 : -1;
         }
         return 0;
@@ -83,7 +85,7 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
                 <tr key={index} className="hover:bg-slate-50 transition-colors">
                   {columns.map((col) => (
                     <td key={col.key} className="px-6 py-4 whitespace-nowrap text-slate-700">
-                      {col.render ? col.render(item) : item[col.key]}
+                      {col.render ? col.render(item) : String(item[col.key] ?? '')}
                     </td>
                   ))}
                 </tr>

@@ -3,7 +3,7 @@ let _idCounter = 0;
 const uuidv4 = () => `id_${Date.now()}_${++_idCounter}_${Math.random().toString(36).slice(2, 8)}`;
 
 // Helper function to generate massive arrays
-const generateArray = (length: number, generator: (index: number) => any) => Array.from({ length }, (_, i) => generator(i));
+const generateArray = <T,>(length: number, generator: (index: number) => T): T[] => Array.from({ length }, (_, i) => generator(i));
 
 // --- SKILLS (200+) ---
 const categories = ['hard_skill', 'soft_skill', 'tool', 'technology', 'certification'];

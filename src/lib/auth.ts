@@ -1,11 +1,19 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
+import bcrypt from 'bcryptjs';
+import { getDb, rowToUser } from '@/lib/db';
+import { getSecret } from '@/lib/security/secret-locker';
 import type { User, UserRole } from '@/types';
 
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'skillsync-default-secret');
+function getJwtSecretBytes(): Uint8Array {
+  const secret = getSecret('JWT_SECRET') || 'skillsync-dev-fallback-secret';
+  return new TextEncoder().encode(secret);
+}
 const COOKIE_NAME = 'skillsync-token';
 
-// Demo users for each role
+const ALLOWED_SELF_REGISTER_ROLES: UserRole[] = ['student', 'trainer', 'institute', 'employer'];
+
+// Demo user directory kept for login quick-select & compatibility
 const DEMO_USERS: Record<string, { password: string; user: User }> = {
   'admin@skillsync.gov.in': {
     password: 'SkillSync2024!',
@@ -16,7 +24,7 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       role: 'government',
       organisationId: 'org_gov_001',
       organisationName: 'Ministry of Skill Development & Entrepreneurship',
-      createdAt: '2024-01-15T10:00:00Z',
+      createdAt: '2025-01-15T10:00:00Z',
     },
   },
   'institute@skillsync.gov.in': {
@@ -27,8 +35,8 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       email: 'institute@skillsync.gov.in',
       role: 'institute',
       organisationId: 'org_inst_001',
-      organisationName: 'National Institute of Technology, Bengaluru',
-      createdAt: '2024-02-01T10:00:00Z',
+      organisationName: 'Don Bosco Institute of Technology & Skill Centre',
+      createdAt: '2025-02-01T10:00:00Z',
     },
   },
   'trainer@skillsync.gov.in': {
@@ -39,8 +47,8 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       email: 'trainer@skillsync.gov.in',
       role: 'trainer',
       organisationId: 'org_inst_001',
-      organisationName: 'National Institute of Technology, Bengaluru',
-      createdAt: '2024-02-15T10:00:00Z',
+      organisationName: 'Don Bosco Institute of Technology & Skill Centre',
+      createdAt: '2025-02-15T10:00:00Z',
     },
   },
   'employer@skillsync.gov.in': {
@@ -52,7 +60,7 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       role: 'employer',
       organisationId: 'org_emp_001',
       organisationName: 'Tata Consultancy Services',
-      createdAt: '2024-03-01T10:00:00Z',
+      createdAt: '2025-03-01T10:00:00Z',
     },
   },
   'student@skillsync.gov.in': {
@@ -63,8 +71,8 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       email: 'student@skillsync.gov.in',
       role: 'student',
       organisationId: 'org_inst_001',
-      organisationName: 'National Institute of Technology, Bengaluru',
-      createdAt: '2024-04-01T10:00:00Z',
+      organisationName: 'Government Polytechnic & Skill Hub, Hubballi',
+      createdAt: '2025-04-01T10:00:00Z',
     },
   },
   'analyst@skillsync.gov.in': {
@@ -76,36 +84,141 @@ const DEMO_USERS: Record<string, { password: string; user: User }> = {
       role: 'analyst',
       organisationId: 'org_gov_001',
       organisationName: 'Ministry of Skill Development & Entrepreneurship',
-      createdAt: '2024-04-15T10:00:00Z',
+      createdAt: '2025-04-15T10:00:00Z',
     },
   },
 };
 
-export async function authenticateUser(email: string, password: string): Promise<{ user: User; token: string } | null> {
-  const entry = DEMO_USERS[email.toLowerCase()];
-  if (!entry || entry.password !== password) {
-    return null;
-  }
-
-  const token = await new SignJWT({
-    userId: entry.user.id,
-    email: entry.user.email,
-    role: entry.user.role,
+async function signUserToken(user: User): Promise<string> {
+  return new SignJWT({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime('24h')
     .setIssuedAt()
-    .sign(JWT_SECRET);
+    .sign(getJwtSecretBytes());
+}
 
-  return { user: entry.user, token };
+export async function authenticateUser(
+  email: string,
+  password: string
+): Promise<{ user: User; token: string } | null> {
+  if (!email || !password) return null;
+  const normalizedEmail = email.trim().toLowerCase();
+  const db = getDb();
+
+  const row = db
+    .prepare('SELECT id, name, email, password_hash, role, organisation_id, organisation_name, location, created_at FROM users WHERE email = ?')
+    .get(normalizedEmail) as
+    | {
+        id: string;
+        name: string;
+        email: string;
+        password_hash: string;
+        role: UserRole;
+        organisation_id: string | null;
+        organisation_name: string | null;
+        location: string | null;
+        created_at: string;
+      }
+    | undefined;
+
+  if (!row) return null;
+
+  const valid = await bcrypt.compare(password, row.password_hash);
+  if (!valid) return null;
+
+  const user = rowToUser(row);
+  const token = await signUserToken(user);
+  return { user, token };
+}
+
+export async function registerUser(input: {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  organisationName?: string;
+  location?: string;
+}): Promise<{ user: User; token: string }> {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const safeRole: UserRole = ALLOWED_SELF_REGISTER_ROLES.includes(input.role) ? input.role : 'student';
+  const db = getDb();
+
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
+  if (existing) {
+    throw new Error('EMAIL_EXISTS');
+  }
+
+  const userId = `usr_${safeRole.slice(0, 3)}_${Date.now().toString(36)}`;
+  const passwordHash = await bcrypt.hash(input.password, 10);
+  const createdAt = new Date().toISOString();
+  const orgId = input.organisationName ? `org_${Date.now().toString(36)}` : null;
+
+  const txn = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO users (id, name, email, password_hash, role, organisation_id, organisation_name, location, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      input.name.trim(),
+      normalizedEmail,
+      passwordHash,
+      safeRole,
+      orgId,
+      input.organisationName?.trim() || null,
+      input.location?.trim() || null,
+      createdAt
+    );
+
+    if (safeRole === 'student') {
+      db.prepare(`
+        INSERT INTO learner_profiles (user_id, headline, location, updated_at)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        userId,
+        'SkillSync Learner',
+        input.location?.trim() || '',
+        createdAt
+      );
+    }
+  });
+
+  txn();
+
+  const user: User = {
+    id: userId,
+    name: input.name.trim(),
+    email: normalizedEmail,
+    role: safeRole,
+    organisationId: orgId || undefined,
+    organisationName: input.organisationName?.trim() || undefined,
+    createdAt,
+  };
+  const token = await signUserToken(user);
+  return { user, token };
 }
 
 export async function verifyToken(token: string): Promise<User | null> {
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
-    const email = payload.email as string;
-    const entry = DEMO_USERS[email];
-    return entry?.user || null;
+    const { payload } = await jwtVerify(token, getJwtSecretBytes());
+    const userId = payload.userId as string | undefined;
+    const email = payload.email as string | undefined;
+    if (!userId && !email) return null;
+
+    const db = getDb();
+    const row = userId
+      ? db
+          .prepare('SELECT id, name, email, role, organisation_id, organisation_name, location, created_at FROM users WHERE id = ?')
+          .get(userId)
+      : db
+          .prepare('SELECT id, name, email, role, organisation_id, organisation_name, location, created_at FROM users WHERE email = ?')
+          .get(email);
+
+    if (!row) return null;
+    return rowToUser(row as Parameters<typeof rowToUser>[0]);
   } catch {
     return null;
   }

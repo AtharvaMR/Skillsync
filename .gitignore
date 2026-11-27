@@ -40,6 +40,9 @@ yarn-error.log*
 *.sqlite
 *.sqlite3
 
+# user uploaded files
+.uploads/
+
 # vercel
 .vercel
 

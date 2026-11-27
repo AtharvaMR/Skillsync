@@ -1,46 +1,82 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getCurrentUser } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { getDefaultProvider } from '@/lib/ai/provider';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+interface PathwayStep {
+  stepName: string;
+  description: string;
+  skillsToAcquire: string[];
+  estimatedDuration: string;
+}
 
 export async function POST(req: NextRequest) {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { currentSkills, targetRole, experience } = await req.json();
+    const rate = checkRateLimit(`ai:${user.id}`, 25, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: `Rate limit reached. Please retry in ${rate.retryAfterSeconds}s.` },
+        { status: 429 }
+      );
+    }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-    
-    const prompt = `
-      Create a career pathway plan.
-      Current Skills: ${currentSkills?.join(', ')}
-      Target Role: ${targetRole}
-      Experience Level: ${experience}
-      
-      Generate a step-by-step learning pathway to reach the target role.
-      Return ONLY a JSON array of objects, each representing a step, with keys: 
-      'stepName', 'description', 'skillsToAcquire' (array of strings), 'estimatedDuration'.
-    `;
+    const body = await req.json();
+    const currentSkills = Array.isArray(body.currentSkills)
+      ? body.currentSkills.filter((s: unknown) => typeof s === 'string')
+      : [];
+    const targetRole = typeof body.targetRole === 'string' ? body.targetRole.trim() : '';
+    const experience = typeof body.experience === 'string' ? body.experience.trim() : 'Fresher';
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const textResponse = response.text();
-    
-    let pathway = [];
+    if (!targetRole) {
+      return NextResponse.json({ error: 'targetRole is required.' }, { status: 400 });
+    }
+
     try {
-      const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        pathway = JSON.parse(jsonMatch[0]);
-      } else {
-        pathway = JSON.parse(textResponse);
+      const provider = getDefaultProvider();
+      const prompt = `
+        Create a 90-day step-by-step learning pathway for a learner in India.
+        Current Skills: ${currentSkills.join(', ') || 'Beginner / None listed'}
+        Target Role: ${targetRole}
+        Experience Level: ${experience}
+
+        Return ONLY a JSON array of 3-4 objects, each with keys:
+        "stepName", "description", "skillsToAcquire" (array of strings), "estimatedDuration".
+      `;
+      const pathway = await provider.generateJSON<PathwayStep[]>(prompt);
+      if (Array.isArray(pathway) && pathway.length > 0) {
+        return NextResponse.json({ pathway, source: provider.name });
       }
-    } catch (e) {
-      return NextResponse.json({ error: 'Failed to generate pathway' }, { status: 500 });
+    } catch (aiErr) {
+      console.warn('Gemini pathway fallback triggered:', aiErr);
     }
 
-    return NextResponse.json({ pathway });
+    const fallback: PathwayStep[] = [
+      {
+        stepName: `Core Foundations for ${targetRole}`,
+        description: 'Strengthen foundational concepts and close immediate prerequisite gaps.',
+        skillsToAcquire: ['Core Problem Solving', 'Git', 'Structured Documentation'],
+        estimatedDuration: 'Weeks 1–3',
+      },
+      {
+        stepName: 'Applied Tooling & Guided Practice',
+        description: `Build small practical exercises aligned with real ${targetRole} job descriptions.`,
+        skillsToAcquire: ['TypeScript', 'SQL', 'REST APIs'],
+        estimatedDuration: 'Weeks 4–7',
+      },
+      {
+        stepName: 'Capstone Evidence & Assessor Validation',
+        description: 'Complete an end-to-end project, upload evidence to Skill Portfolio, and request trainer validation.',
+        skillsToAcquire: ['System Integration', 'Testing', 'Portfolio Presentation'],
+        estimatedDuration: 'Weeks 8–12',
+      },
+    ];
+
+    return NextResponse.json({ pathway: fallback, source: 'fallback' });
   } catch (error) {
     console.error('Error in career pathway:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

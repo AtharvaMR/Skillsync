@@ -1,90 +1,143 @@
-'use client';
+"use client";
 
-import { Users, Search, MapPin, Briefcase } from 'lucide-react';
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { Users, Search, MapPin, ExternalLink } from "lucide-react";
+import { ProvenanceBadge } from "@/components/ui/provenance-badge";
+
+interface CandidateItem {
+  id: string;
+  displayId: string;
+  name: string;
+  headline: string;
+  location: string;
+  targetRole: string;
+  portfolioPublic: boolean;
+  skills: Array<{ skill_name: string; provenance: string }>;
+  verifiedCount: number;
+  validatedProjects: number;
+  totalProjects: number;
+}
 
 export default function CandidatesPage() {
-  const candidates = [
-    { id: 'CND-8492', mask: 'R*** S***', location: 'Pune, MH', skills: ['React', 'Node.js', 'MongoDB'], status: 'Employed', course: 'Advanced Web Dev' },
-    { id: 'CND-1029', mask: 'A*** K***', location: 'Bangalore, KA', skills: ['Python', 'SQL', 'AWS'], status: 'Looking', course: 'Data Engineering' },
-    { id: 'CND-5581', mask: 'M*** P***', location: 'Delhi, DL', skills: ['AutoCAD', 'SolidWorks'], status: 'Employed', course: 'CAD Design' },
-    { id: 'CND-3312', mask: 'K*** V***', location: 'Chennai, TN', skills: ['Cybersecurity', 'Linux'], status: 'Upskilling', course: 'Network Sec' },
-  ];
+  const [candidates, setCandidates] = useState<CandidateItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const loadCandidates = async (q = search) => {
+    setLoading(true);
+    try {
+      const params = q.trim() ? `?search=${encodeURIComponent(q.trim())}` : "";
+      const res = await fetch(`/api/candidates${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCandidates(data.candidates || []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/candidates")
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data) setCandidates(data.candidates || []);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-2">
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Users className="text-indigo-600" />
-            Candidate Intelligence
+            <Users className="text-blue-600" /> Competency-Based Talent Discovery
           </h1>
-          <p className="text-sm text-slate-500 mt-1">Anonymized view of candidate pool and trajectories</p>
+          <p className="text-sm text-slate-600 mt-1">
+            Discover learners by verified skills and practical portfolio evidence while respecting privacy controls.
+          </p>
+        </div>
+
+        <div className="flex gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && loadCandidates(search)}
+              placeholder="Filter by skill, role, or city..."
+              className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => loadCandidates(search)}
+            className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold"
+          >
+            Filter
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { label: 'Total Candidates Tracked', value: '2.4M' },
-          { label: 'Currently Enrolled', value: '850K' },
-          { label: 'Active Job Seekers', value: '420K' },
-        ].map((stat, i) => (
-          <div key={i} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-            <div className="text-sm font-medium text-slate-500 mb-1">{stat.label}</div>
-            <div className="text-3xl font-bold text-slate-900">{stat.value}</div>
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
+          Loading learner profiles...
+        </div>
+      ) : candidates.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
+          No learners match your filter.
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-4">
+          {candidates.map((c) => (
+            <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-bold text-slate-900 text-base">{c.name}</h2>
+                  <p className="text-xs text-slate-600">{c.headline}</p>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
+                    <span className="inline-flex items-center gap-1"><MapPin size={12} /> {c.location}</span>
+                    <span>Target: <strong className="text-slate-700">{c.targetRole}</strong></span>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-bold text-emerald-700">{c.verifiedCount} Verified</div>
+                  <div className="text-[11px] text-slate-500">{c.validatedProjects}/{c.totalProjects} projects validated</div>
+                </div>
+              </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-            <h2 className="text-lg font-bold text-slate-800">Candidate Pool (Anonymized)</h2>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-              <input type="text" placeholder="Search by ID or Skill..." className="pl-8 pr-3 py-1.5 border border-slate-300 rounded text-sm w-64 outline-none focus:border-blue-500 bg-white" />
-            </div>
-          </div>
-          <div className="overflow-x-auto flex-1">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-white text-slate-600 text-xs font-semibold uppercase border-b border-slate-200">
-                <tr>
-                  <th className="px-5 py-4">Candidate ID</th>
-                  <th className="px-5 py-4">Location</th>
-                  <th className="px-5 py-4">Top Skills</th>
-                  <th className="px-5 py-4">Origin Course</th>
-                  <th className="px-5 py-4 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {candidates.map((cnd, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-5 py-4">
-                       <div className="font-mono font-bold text-slate-800">{cnd.id}</div>
-                       <div className="text-xs text-slate-500">{cnd.mask}</div>
-                    </td>
-                    <td className="px-5 py-4">
-                       <div className="flex items-center gap-1 text-slate-600"><MapPin size={14}/> {cnd.location}</div>
-                    </td>
-                    <td className="px-5 py-4">
-                       <div className="flex flex-wrap gap-1">
-                          {cnd.skills.map(s => <span key={s} className="bg-slate-100 border border-slate-200 text-slate-600 px-2 py-0.5 rounded text-[10px] font-semibold">{s}</span>)}
-                       </div>
-                    </td>
-                    <td className="px-5 py-4 text-slate-700 font-medium">{cnd.course}</td>
-                    <td className="px-5 py-4 text-right">
-                       <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                         cnd.status === 'Employed' ? 'bg-emerald-100 text-emerald-700' :
-                         cnd.status === 'Looking' ? 'bg-blue-100 text-blue-700' :
-                         'bg-amber-100 text-amber-700'
-                       }`}>
-                         {cnd.status}
-                       </span>
-                    </td>
-                  </tr>
+              <div className="flex flex-wrap gap-1.5">
+                {c.skills.slice(0, 6).map((s, idx) => (
+                  <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+                    <span className="font-medium text-slate-800">{s.skill_name}</span>
+                    <ProvenanceBadge provenance={s.provenance} />
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          </div>
-      </div>
+              </div>
+
+              {c.portfolioPublic && (
+                <div className="pt-2 border-t border-slate-100 flex justify-end">
+                  <Link
+                    href={`/portfolio/${c.id}`}
+                    target="_blank"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:underline"
+                  >
+                    View Verified Skill Portfolio <ExternalLink size={13} />
+                  </Link>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

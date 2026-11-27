@@ -13,7 +13,7 @@ import {
 } from "recharts";
 
 interface LineChartProps {
-  data: any[];
+  data: Record<string, unknown>[];
   xKey: string;
   lines: Array<{ key: string; color: string; name: string }>;
   title?: string;
